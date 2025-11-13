@@ -11,10 +11,26 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  intl: ^0.20.2
   draftmode_worker:
     path: ../worker
   draftmode_example:
     path: ../example
+  draftmode_formatter:
+    path: ../formatter
+  draftmode_localization:
+    path: ../localization
+  draftmode_ui:
+    path: ../ui
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  generate: true
 
 repository: https://github.com/draftm0de/flutter
 issue_tracker: https://github.com/draftm0de/flutter/issues
