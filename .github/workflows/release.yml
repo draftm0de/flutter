@@ -13,7 +13,7 @@ permissions:
 jobs:
   version-auto-tag:
     # avoid running if automated push, disallowed repo, or when no Flutter project is present
-    if: github.actor != 'github-actions[bot]' && github.repository != 'draftm0de/flutter.clone' && hashFiles('pubspec.yaml') != ''
+    if: github.actor != 'github-actions[bot]' && github.repository != 'draftm0de/flutter.clone'
     runs-on: ubuntu-latest
 
     steps:

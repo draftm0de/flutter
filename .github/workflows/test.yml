@@ -15,7 +15,7 @@ on:
 
 jobs:
   test:
-    if: github.repository != 'draftm0de/flutter.clone' && hashFiles('pubspec.yaml') != ''
+    if: github.repository != 'draftm0de/flutter.clone'
     runs-on: ubuntu-latest
 
     steps:
