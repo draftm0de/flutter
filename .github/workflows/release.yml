@@ -5,86 +5,127 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch:
-    inputs:
-      pubspec-path:
-        description: Path to pubspec.yaml
-        required: false
-        default: pubspec.yaml
-  workflow_call:
-    inputs:
-      pubspec-path:
-        description: Path to pubspec.yaml
-        required: false
-        type: string
-        default: pubspec.yaml
+
+permissions:
+  contents: write
 
 jobs:
-  auto-tag:
+  version-auto-tag:
+    # avoid running if this push was created by github-actions itself
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      PUBSPEC_PATH: ${{ inputs.pubspec-path || github.event.inputs.pubspec-path || 'pubspec.yaml' }}
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      - name: Setup Git user
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"   
+          echo "✔ Git use configured successfully!"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 'stable'
+          cache: true
+
+      - name: Cache pub packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+            **/.dart_tool
+          key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-          
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Generate localization
+        run: |
+          if [ -f "l10n.yaml" ]; then
+            flutter gen-l10n
+            echo "✔ flutter gen-l10n build successfully!"
+          else
+            echo "::notice::No l10n.yaml found → skipping localization generation"
+          fi    
+
       - name: Fetch tags
         run: git fetch --tags --force
 
-      - name: Set up Dart
-        uses: dart-lang/setup-dart@v1
-
-      - name: Read major.minor from pubspec.yaml
-        id: base
+      - name: Read version from pubspec.yaml
+        id: version
         run: |
-          if [ ! -f "$PUBSPEC_PATH" ]; then
-            echo "pubspec not found at $PUBSPEC_PATH"
+          if ! grep -q '^version: ' pubspec.yaml; then
+            echo "::error:: No 'version:' entry found in pubspec.yaml"
             exit 1
           fi
 
-          VERSION_LINE=$(grep "^version:" "$PUBSPEC_PATH" | head -n 1)
-          if [ -z "$VERSION_LINE" ]; then
-            echo "No version entry found in $PUBSPEC_PATH"
-            exit 1
+          VERSION_LINE=$(grep '^version: ' pubspec.yaml | sed 's/version: //')
+          echo "::notice:: Current version: $VERSION_LINE"
+
+          CORE_VERSION="$VERSION_LINE"
+          BUILD_PART=""
+          HAS_BUILD=false
+
+          if [[ "$VERSION_LINE" == *"+"* ]]; then
+            HAS_BUILD=true
+            CORE_VERSION="${VERSION_LINE%%+*}"
+            BUILD_PART="${VERSION_LINE#*+}"
           fi
 
-          RAW_VERSION=$(echo "$VERSION_LINE" | awk '{print $2}')
-          RAW_VERSION=${RAW_VERSION%%+*}
-          MAJOR_MINOR=$(echo "$RAW_VERSION" | awk -F. '{print $1 "." $2}')
-
-          echo "base_version=$MAJOR_MINOR" >> "$GITHUB_OUTPUT"
-
-      - name: Calculate next patch tag
-        id: calc
-        run: |
-          BASE_VERSION="${{ steps.base.outputs.base_version }}"
-          LAST_TAG=$(git tag --list "${BASE_VERSION}.*" | sort -V | tail -n 1)
-
-          if [ -z "$LAST_TAG" ]; then
-            NEXT_TAG="${BASE_VERSION}.0"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CORE_VERSION"
+          
+          if [[ -z "$MAJOR" || -z "$MINOR" || -z "$PATCH" ]]; then
+            echo "::error:: Could not parse version '$CORE_VERSION' as MAJOR.MINOR.PATCH"
+            exit 1
+          fi
+          
+          PATCH=$((PATCH + 1))
+          NEW_CORE="${MAJOR}.${MINOR}.${PATCH}"
+          
+          if $HAS_BUILD; then
+            NEW_VERSION="${NEW_CORE}+${BUILD_PART}"
           else
-            PATCH=$(echo "$LAST_TAG" | awk -F. '{print $3}')
-            NEXT_TAG="${BASE_VERSION}.$((PATCH + 1))"
+            NEW_VERSION="${NEW_CORE}"
           fi
+        
+          echo "✔ New version: $NEW_VERSION"
+          echo "- [x] New version: $NEW_VERSION" >> $GITHUB_STEP_SUMMARY
+          
+          sed -i "s/^version: .*/version: ${NEW_VERSION}/" pubspec.yaml
+          echo "✔ Updating pubspec.yaml with version $NEW_VERSION successfully!"
+          
+          echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
 
-          echo "next_tag=$NEXT_TAG" >> "$GITHUB_OUTPUT"
+      - name: Commit changes
+        run: |
+          if [[ -z "$(git status --porcelain)" ]]; then
+            echo "::notice:: No changes to commit."
+            exit 0
+          fi
+          
+          NEW_VERSION="${{ steps.version.outputs.new_version }}"
+          git add pubspec.yaml
+          git commit -m "chore: auto-tagging version to ${NEW_VERSION} [skip ci]"
+          git push
 
       - name: Create and push tag
+        if: steps.version.outputs.new_version != ''
         run: |
-          NEXT_TAG="${{ steps.calc.outputs.next_tag }}"
+          NEW_VERSION="${{ steps.version.outputs.new_version }}"
+          TAG="v${NEW_VERSION}"
 
-          if git rev-parse -q --verify "refs/tags/$NEXT_TAG" >/dev/null; then
-            echo "Tag $NEXT_TAG already exists, skipping"
+          # Only create tag if it doesn't already exist
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "::error:: Tag ${TAG} already exists, skipping."
             exit 0
           fi
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git tag "$NEXT_TAG"
-          git push origin "$NEXT_TAG"
+          git tag "$TAG"
+          git push origin "$TAG"

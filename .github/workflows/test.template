@@ -1,0 +1,8 @@
+name: Lint and Tests
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    uses: draftm0de/flutter/.github/workflows/test.yml@main
