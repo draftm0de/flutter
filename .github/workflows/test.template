@@ -4,5 +4,5 @@ on:
     branches: [main]
 
 jobs:
-  lint:
+  test:
     uses: draftm0de/flutter/.github/workflows/test.yml@main
