@@ -26,13 +26,12 @@ jobs:
         run: |
           set -euo pipefail
           CONSTRAINT=$(grep -E "^\s*flutter:" pubspec.yaml | head -n1 | cut -d: -f2- | tr -d "\"'" | xargs || true)
+          VERSION=$(echo "$CONSTRAINT" | grep -Eo '>=\s*[0-9]+(\.[0-9]+){1,2}' | head -n1 | sed -E 's/>=\s*//' || true)
 
           if [[ -z "${CONSTRAINT:-}" ]]; then
             echo "::warning::No flutter constraint found; defaulting to latest stable"
             VERSION=latest
-          elif [[ "$CONSTRAINT" =~ >=([0-9]+(\.[0-9]+){1,2}) ]]; then
-            VERSION="${BASH_REMATCH[1]}"
-          else
+          elif [[ -z "${VERSION:-}" ]]; then
             echo "::warning::Unable to parse flutter constraint '$CONSTRAINT'; defaulting to latest stable"
             VERSION=latest
           fi
