@@ -30,7 +30,7 @@ jobs:
           if [[ -z "${CONSTRAINT:-}" ]]; then
             echo "::warning::No flutter constraint found; defaulting to latest stable"
             VERSION=latest
-          elif [[ $CONSTRAINT =~ >=([0-9]+(\.[0-9]+){1,2}) ]]; then
+          elif [[ "$CONSTRAINT" =~ >=([0-9]+(\.[0-9]+){1,2}) ]]; then
             VERSION="${BASH_REMATCH[1]}"
           else
             echo "::warning::Unable to parse flutter constraint '$CONSTRAINT'; defaulting to latest stable"
