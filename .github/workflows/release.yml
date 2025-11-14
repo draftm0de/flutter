@@ -126,7 +126,7 @@ jobs:
           # Only create tag if it doesn't already exist
           if git rev-parse "$TAG" >/dev/null 2>&1; then
             echo "::error::Tag ${TAG} already exists, skipping."
-            exit 0
+            exit 1
           fi
 
           git tag "$TAG"
