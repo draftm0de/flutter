@@ -1,0 +1,90 @@
+name: Release Tagging
+
+# Creates the next patch tag based on the pubspec version whenever main changes or on demand.
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      pubspec-path:
+        description: Path to pubspec.yaml
+        required: false
+        default: pubspec.yaml
+  workflow_call:
+    inputs:
+      pubspec-path:
+        description: Path to pubspec.yaml
+        required: false
+        type: string
+        default: pubspec.yaml
+
+jobs:
+  auto-tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      PUBSPEC_PATH: ${{ inputs.pubspec-path || github.event.inputs.pubspec-path || 'pubspec.yaml' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch tags
+        run: git fetch --tags --force
+
+      - name: Set up Dart
+        uses: dart-lang/setup-dart@v1
+
+      - name: Read major.minor from pubspec.yaml
+        id: base
+        run: |
+          if [ ! -f "$PUBSPEC_PATH" ]; then
+            echo "pubspec not found at $PUBSPEC_PATH"
+            exit 1
+          fi
+
+          VERSION_LINE=$(grep "^version:" "$PUBSPEC_PATH" | head -n 1)
+          if [ -z "$VERSION_LINE" ]; then
+            echo "No version entry found in $PUBSPEC_PATH"
+            exit 1
+          fi
+
+          RAW_VERSION=$(echo "$VERSION_LINE" | awk '{print $2}')
+          RAW_VERSION=${RAW_VERSION%%+*}
+          MAJOR_MINOR=$(echo "$RAW_VERSION" | awk -F. '{print $1 "." $2}')
+
+          echo "base_version=$MAJOR_MINOR" >> "$GITHUB_OUTPUT"
+
+      - name: Calculate next patch tag
+        id: calc
+        run: |
+          BASE_VERSION="${{ steps.base.outputs.base_version }}"
+          LAST_TAG=$(git tag --list "${BASE_VERSION}.*" | sort -V | tail -n 1)
+
+          if [ -z "$LAST_TAG" ]; then
+            NEXT_TAG="${BASE_VERSION}.0"
+          else
+            PATCH=$(echo "$LAST_TAG" | awk -F. '{print $3}')
+            NEXT_TAG="${BASE_VERSION}.$((PATCH + 1))"
+          fi
+
+          echo "next_tag=$NEXT_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        run: |
+          NEXT_TAG="${{ steps.calc.outputs.next_tag }}"
+
+          if git rev-parse -q --verify "refs/tags/$NEXT_TAG" >/dev/null; then
+            echo "Tag $NEXT_TAG already exists, skipping"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git tag "$NEXT_TAG"
+          git push origin "$NEXT_TAG"
