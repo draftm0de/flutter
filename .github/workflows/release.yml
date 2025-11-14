@@ -28,36 +28,11 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"   
           echo "✔ Git use configured successfully!"
 
-      - name: Determine Flutter version
-        id: flutter_version
-        run: |
-          set -euo pipefail
-          VERSION_LINE=$(awk '
-            /^environment:/ { env=1; next }
-            env && /^[^[:space:]]/ { exit }
-            env && /^[[:space:]]+flutter:/ { print; exit }
-          ' pubspec.yaml)
-
-          CONSTRAINT=$(echo "$VERSION_LINE" | cut -d: -f2- | tr -d "\"'" | xargs || true)
-          VERSION=$(echo "$CONSTRAINT" | grep -Eo '>=\s*[0-9]+(\.[0-9]+){1,2}' | head -n1 | sed -E 's/>=\s*//' || true)
-
-          if [[ -z "${CONSTRAINT:-}" ]]; then
-            echo "::warning::No flutter constraint found; defaulting to latest stable"
-            VERSION=""
-          elif [[ -z "${VERSION:-}" ]]; then
-            echo "::warning::Unable to parse flutter constraint '$CONSTRAINT'; defaulting to latest stable"
-            VERSION=""
-          else
-            echo "::notice::Using Flutter version constraint >= ${VERSION}"
-          fi
-
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: ${{ steps.flutter_version.outputs.version || 'latest' }}
           channel: 'stable'
+          flutter-version-file: pubspec.yaml
           cache: true
 
       - name: Cache pub packages

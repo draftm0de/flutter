@@ -49,8 +49,8 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: ${{ steps.flutter_version.outputs.version || 'latest' }}
           channel: 'stable'
+          flutter-version-file: pubspec.yaml
           cache: true
 
       - name: Cache pub packages
