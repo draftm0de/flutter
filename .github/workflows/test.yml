@@ -21,9 +21,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Determine Flutter version
+        id: flutter_version
+        run: |
+          set -euo pipefail
+          CONSTRAINT=$(grep -E "^\s*flutter:" pubspec.yaml | head -n1 | cut -d: -f2- | tr -d "\"'" | xargs || true)
+
+          if [[ -z "${CONSTRAINT:-}" ]]; then
+            echo "::warning::No flutter constraint found; defaulting to latest stable"
+            VERSION=latest
+          elif [[ $CONSTRAINT =~ >=([0-9]+(\.[0-9]+){1,2}) ]]; then
+            VERSION="${BASH_REMATCH[1]}"
+          else
+            echo "::warning::Unable to parse flutter constraint '$CONSTRAINT'; defaulting to latest stable"
+            VERSION=latest
+          fi
+
+          echo "::notice::Using Flutter version $VERSION"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: ${{ steps.flutter_version.outputs.version }}
           channel: 'stable'
           cache: true
 

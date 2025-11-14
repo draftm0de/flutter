@@ -28,9 +28,29 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"   
           echo "✔ Git use configured successfully!"
 
+      - name: Determine Flutter version
+        id: flutter_version
+        run: |
+          set -euo pipefail
+          CONSTRAINT=$(grep -E "^\s*flutter:" pubspec.yaml | head -n1 | cut -d: -f2- | tr -d "\"'" | xargs || true)
+
+          if [[ -z "${CONSTRAINT:-}" ]]; then
+            echo "::warning::No flutter constraint found; defaulting to latest stable"
+            VERSION=latest
+          elif [[ $CONSTRAINT =~ >=([0-9]+(\.[0-9]+){1,2}) ]]; then
+            VERSION="${BASH_REMATCH[1]}"
+          else
+            echo "::warning::Unable to parse flutter constraint '$CONSTRAINT'; defaulting to latest stable"
+            VERSION=latest
+          fi
+
+          echo "::notice::Using Flutter version $VERSION"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: ${{ steps.flutter_version.outputs.version }}
           channel: 'stable'
           cache: true
 
@@ -63,12 +83,12 @@ jobs:
         id: version
         run: |
           if ! grep -q '^version: ' pubspec.yaml; then
-            echo "::error:: No 'version:' entry found in pubspec.yaml"
+            echo "::error::No 'version:' entry found in pubspec.yaml"
             exit 1
           fi
 
           VERSION_LINE=$(grep '^version: ' pubspec.yaml | sed 's/version: //')
-          echo "::notice:: Current version: $VERSION_LINE"
+          echo "::notice::Current version: $VERSION_LINE"
 
           CORE_VERSION="$VERSION_LINE"
           BUILD_PART=""
@@ -83,7 +103,7 @@ jobs:
           IFS='.' read -r MAJOR MINOR PATCH <<< "$CORE_VERSION"
           
           if [[ -z "$MAJOR" || -z "$MINOR" || -z "$PATCH" ]]; then
-            echo "::error:: Could not parse version '$CORE_VERSION' as MAJOR.MINOR.PATCH"
+            echo "::error::Could not parse version '$CORE_VERSION' as MAJOR.MINOR.PATCH"
             exit 1
           fi
           
@@ -107,7 +127,7 @@ jobs:
       - name: Commit changes
         run: |
           if [[ -z "$(git status --porcelain)" ]]; then
-            echo "::notice:: No changes to commit."
+            echo "::notice::No changes to commit."
             exit 0
           fi
           
@@ -124,7 +144,7 @@ jobs:
 
           # Only create tag if it doesn't already exist
           if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "::error:: Tag ${TAG} already exists, skipping."
+            echo "::error::Tag ${TAG} already exists, skipping."
             exit 0
           fi
 
