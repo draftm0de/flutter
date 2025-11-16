@@ -109,6 +109,10 @@ jobs:
         run: |
           git add -A
 
+          if compgen -G "lib/l10n/*localizations*.dart" > /dev/null; then
+            git add -f lib/l10n/*localizations*.dart
+          fi
+
           if git diff --cached --quiet; then
             echo "::notice::No changes to commit."
             exit 0
