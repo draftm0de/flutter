@@ -12,8 +12,12 @@ permissions:
 
 jobs:
   version-auto-tag:
-    # avoid running if automated push, disallowed repo, or when no Flutter project is present
-    if: github.actor != 'github-actions[bot]' && github.repository != 'draftm0de/flutter.clone'
+    # avoid running on disallowed repo, and ensure push events only trigger for the right actor
+    if: github.repository != 'draftm0de/flutter.clone' && (
+          github.event_name != 'push' ||
+          (github.repository == 'draftm0de/flutter' && github.actor == 'github-actions[bot]') ||
+          (github.repository != 'draftm0de/flutter' && github.actor != 'github-actions[bot]')
+        )
     runs-on: ubuntu-latest
 
     steps:
@@ -62,6 +66,8 @@ jobs:
 
       - name: Read version from pubspec.yaml
         id: version
+        env:
+          IS_FACADE: ${{ github.repository == 'draftm0de/flutter' }}
         run: |
           if ! grep -q '^version: ' pubspec.yaml; then
             echo "::error::No 'version:' entry found in pubspec.yaml"
@@ -88,24 +94,33 @@ jobs:
             exit 1
           fi
           
-          PATCH=$((PATCH + 1))
-          NEW_CORE="${MAJOR}.${MINOR}.${PATCH}"
-          
-          if $HAS_BUILD; then
-            NEW_VERSION="${NEW_CORE}+${BUILD_PART}"
+          SHOULD_COMMIT=true
+
+          if [[ "$IS_FACADE" == "true" ]]; then
+            NEW_VERSION="$VERSION_LINE"
+            SHOULD_COMMIT=false
           else
-            NEW_VERSION="${NEW_CORE}"
+            PATCH=$((PATCH + 1))
+            NEW_CORE="${MAJOR}.${MINOR}.${PATCH}"
+
+            if $HAS_BUILD; then
+              NEW_VERSION="${NEW_CORE}+${BUILD_PART}"
+            else
+              NEW_VERSION="${NEW_CORE}"
+            fi
+
+            sed -i "s/^version: .*/version: ${NEW_VERSION}/" pubspec.yaml
+            echo "✔ Updating pubspec.yaml with version $NEW_VERSION successfully!"
           fi
-        
-          echo "✔ New version: $NEW_VERSION"
+
+          echo "✔ New version (target): $NEW_VERSION"
           echo "- [x] New version: $NEW_VERSION" >> $GITHUB_STEP_SUMMARY
-          
-          sed -i "s/^version: .*/version: ${NEW_VERSION}/" pubspec.yaml
-          echo "✔ Updating pubspec.yaml with version $NEW_VERSION successfully!"
-          
+
           echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "should_commit=${SHOULD_COMMIT}" >> "$GITHUB_OUTPUT"
 
       - name: Commit changes
+        if: steps.version.outputs.should_commit == 'true'
         run: |
           git add -A
 

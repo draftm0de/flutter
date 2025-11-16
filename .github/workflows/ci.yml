@@ -1,0 +1,156 @@
+name: Flutter CI
+
+# Runs formatter, analyzer, and tests for PRs, and on pushes to main also bumps the
+# package version so the release workflow can tag the freshly built revision.
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+  push:
+    branches:
+      - main
+  workflow_call:
+
+permissions:
+  contents: write
+
+jobs:
+  tests:
+    if: github.repository != 'draftm0de/flutter.clone'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          flutter-version-file: pubspec.yaml
+          cache: true
+
+      - name: Cache pub packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+            **/.dart_tool
+          key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Generate localizations and verify they are commited
+        run: |
+          if [ -f "l10n.yaml" ]; then
+            flutter gen-l10n
+          
+            if ! git diff --quiet; then
+              echo "::error::Localization files are not committed or outdated!"
+              echo "Run 'flutter gen-l10n' locally and commit the generated files."
+              git diff
+              exit 1
+            else 
+              echo "✔ Localization files are up to date."
+            fi
+          else
+            echo "::notice::No l10n.yaml found → skipping localization verification"
+          fi        
+
+      - name: Enforce formatting
+        run: dart format --output=none --set-exit-if-changed .
+
+      - name: Analyze
+        run: dart analyze .
+
+      - name: Run tests
+        run: flutter test
+
+  build-tag-version:
+    if: github.repository == 'draftm0de/flutter' && github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor != 'github-actions[bot]'
+    needs: tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Git user
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump pubspec version
+        id: bump
+        run: |
+          set -euo pipefail
+
+          if ! grep -q '^version: ' pubspec.yaml; then
+            echo "::error::No 'version:' entry found in pubspec.yaml"
+            exit 1
+          fi
+
+          VERSION_LINE=$(grep '^version: ' pubspec.yaml | sed 's/version: //')
+          echo "::notice::Current version: $VERSION_LINE"
+
+          CORE_VERSION="$VERSION_LINE"
+          BUILD_PART=""
+          HAS_BUILD=false
+
+          if [[ "$VERSION_LINE" == *"+"* ]]; then
+            HAS_BUILD=true
+            CORE_VERSION="${VERSION_LINE%%+*}"
+            BUILD_PART="${VERSION_LINE#*+}"
+          fi
+
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CORE_VERSION"
+
+          if [[ -z "$MAJOR" || -z "$MINOR" || -z "$PATCH" ]]; then
+            echo "::error::Could not parse version '$CORE_VERSION' as MAJOR.MINOR.PATCH"
+            exit 1
+          fi
+
+          PATCH=$((PATCH + 1))
+          NEW_CORE="${MAJOR}.${MINOR}.${PATCH}"
+
+          if $HAS_BUILD; then
+            NEW_VERSION="${NEW_CORE}+${BUILD_PART}"
+          else
+            NEW_VERSION="$NEW_CORE"
+          fi
+
+          sed -i "s/^version: .*/version: ${NEW_VERSION}/" pubspec.yaml
+          echo "✔ Updated pubspec.yaml to ${NEW_VERSION}"
+
+          echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Commit version bump
+        env:
+          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
+        run: |
+          git add pubspec.yaml
+
+          if git diff --cached --quiet; then
+            echo "::notice::No changes to commit."
+            exit 0
+          fi
+
+          git commit -m "chore: auto-tagging version to ${NEW_VERSION} [skip ci]"
+          git push
+
+      - name: Summarize
+        env:
+          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
+        run: |
+          echo "- [x] Bumped pubspec version to ${NEW_VERSION}" >> "$GITHUB_STEP_SUMMARY"
