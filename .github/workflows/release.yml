@@ -12,12 +12,8 @@ permissions:
 
 jobs:
   version-auto-tag:
-    # avoid running on disallowed repo, and ensure push events only trigger for the right actor
-    if: github.repository != 'draftm0de/flutter.clone' && (
-          github.event_name != 'push' ||
-          (github.repository == 'draftm0de/flutter' && github.actor == 'github-actions[bot]') ||
-          (github.repository != 'draftm0de/flutter' && github.actor != 'github-actions[bot]')
-        )
+    # avoid running on disallowed repo
+    if: github.repository != 'draftm0de/flutter.clone'
     runs-on: ubuntu-latest
 
     steps:
