@@ -107,13 +107,14 @@ jobs:
 
       - name: Commit changes
         run: |
-          if [[ -z "$(git status --porcelain)" ]]; then
+          git add -A
+
+          if git diff --cached --quiet; then
             echo "::notice::No changes to commit."
             exit 0
           fi
           
           NEW_VERSION="${{ steps.version.outputs.new_version }}"
-          git add pubspec.yaml
           git commit -m "chore: auto-tagging version to ${NEW_VERSION} [skip ci]"
           git push
 
