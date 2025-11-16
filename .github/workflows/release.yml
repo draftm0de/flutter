@@ -12,8 +12,8 @@ permissions:
 
 jobs:
   version-auto-tag:
-    # avoid running on disallowed repo
-    if: github.repository != 'draftm0de/flutter.clone'
+    # avoid running on disallowed repo and prevent loops on bot pushes
+    if: github.repository != 'draftm0de/flutter.clone' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
 
     steps:
@@ -60,11 +60,37 @@ jobs:
       - name: Fetch tags
         run: git fetch --tags --force
 
-      - name: Read version from pubspec.yaml
+      - name: Determine latest tag
+        id: latest_tag
+        run: |
+          set -euo pipefail
+
+          LATEST_TAG=$(git tag -l --sort=-v:refname | head -n 1)
+
+          if [[ -z "$LATEST_TAG" ]]; then
+            echo "::notice::No tags found yet"
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "version=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$LATEST_TAG" == v* ]]; then
+            CLEANED="${LATEST_TAG#v}"
+          else
+            CLEANED="$LATEST_TAG"
+          fi
+
+          echo "::notice::Latest tag: $LATEST_TAG"
+          echo "tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${CLEANED}" >> "$GITHUB_OUTPUT"
+
+      - name: Build next version from pubspec.yaml
         id: version
         env:
-          IS_FACADE: ${{ github.repository == 'draftm0de/flutter' }}
+          LATEST_VERSION: ${{ steps.latest_tag.outputs.version }}
         run: |
+          set -euo pipefail
+
           if ! grep -q '^version: ' pubspec.yaml; then
             echo "::error::No 'version:' entry found in pubspec.yaml"
             exit 1
@@ -84,39 +110,65 @@ jobs:
           fi
 
           IFS='.' read -r MAJOR MINOR PATCH <<< "$CORE_VERSION"
-          
+
           if [[ -z "$MAJOR" || -z "$MINOR" || -z "$PATCH" ]]; then
             echo "::error::Could not parse version '$CORE_VERSION' as MAJOR.MINOR.PATCH"
             exit 1
           fi
-          
-          SHOULD_COMMIT=true
 
-          if [[ "$IS_FACADE" == "true" ]]; then
-            NEW_VERSION="$VERSION_LINE"
-            SHOULD_COMMIT=false
-          else
+          TARGET_VERSION="$VERSION_LINE"
+          SHOULD_BUMP=false
+
+          if [[ -n "$LATEST_VERSION" ]]; then
+            LATEST_CORE="$LATEST_VERSION"
+            LATEST_BUILD=""
+            LATEST_HAS_BUILD=false
+
+            if [[ "$LATEST_VERSION" == *"+"* ]]; then
+              LATEST_HAS_BUILD=true
+              LATEST_CORE="${LATEST_VERSION%%+*}"
+              LATEST_BUILD="${LATEST_VERSION#*+}"
+            fi
+
+            IFS='.' read -r LATEST_MAJOR LATEST_MINOR LATEST_PATCH <<< "$LATEST_CORE"
+
+            if [[ -z "$LATEST_MAJOR" || -z "$LATEST_MINOR" || -z "$LATEST_PATCH" ]]; then
+              echo "::error::Could not parse latest tag '$LATEST_VERSION' as MAJOR.MINOR.PATCH"
+              exit 1
+            fi
+
+            if [[ "$MAJOR" -eq "$LATEST_MAJOR" && "$MINOR" -eq "$LATEST_MINOR" ]]; then
+              SHOULD_BUMP=true
+            fi
+
+            if [[ "$MAJOR" -lt "$LATEST_MAJOR" || ( "$MAJOR" -eq "$LATEST_MAJOR" && "$MINOR" -lt "$LATEST_MINOR" ) ]]; then
+              echo "::error::pubspec.yaml version ${VERSION_LINE} is behind latest tag major/minor $LATEST_MAJOR.$LATEST_MINOR"
+              exit 1
+            fi
+          fi
+
+          if $SHOULD_BUMP; then
             PATCH=$((PATCH + 1))
             NEW_CORE="${MAJOR}.${MINOR}.${PATCH}"
 
             if $HAS_BUILD; then
-              NEW_VERSION="${NEW_CORE}+${BUILD_PART}"
+              TARGET_VERSION="${NEW_CORE}+${BUILD_PART}"
             else
-              NEW_VERSION="${NEW_CORE}"
+              TARGET_VERSION="${NEW_CORE}"
             fi
 
-            sed -i "s/^version: .*/version: ${NEW_VERSION}/" pubspec.yaml
-            echo "✔ Updating pubspec.yaml with version $NEW_VERSION successfully!"
+            sed -i "s/^version: .*/version: ${TARGET_VERSION}/" pubspec.yaml
+            echo "✔ Auto-incremented patch to ${TARGET_VERSION}"
+          else
+            echo "::notice::Using provided version ${TARGET_VERSION}"
           fi
 
-          echo "✔ New version (target): $NEW_VERSION"
-          echo "- [x] New version: $NEW_VERSION" >> $GITHUB_STEP_SUMMARY
+          echo "✔ Next version: $TARGET_VERSION"
+          echo "- [x] Next version: $TARGET_VERSION" >> $GITHUB_STEP_SUMMARY
 
-          echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "should_commit=${SHOULD_COMMIT}" >> "$GITHUB_OUTPUT"
+          echo "new_version=${TARGET_VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Commit changes
-        if: steps.version.outputs.should_commit == 'true'
         run: |
           git add -A
 
@@ -138,12 +190,6 @@ jobs:
         run: |
           NEW_VERSION="${{ steps.version.outputs.new_version }}"
           TAG="v${NEW_VERSION}"
-
-          # Only create tag if it doesn't already exist
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "::error::Tag ${TAG} already exists, skipping."
-            exit 1
-          fi
 
           git tag "$TAG"
           git push origin "$TAG"

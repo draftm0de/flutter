@@ -21,8 +21,125 @@ permissions:
   contents: write
 
 jobs:
+  verify-version-tag:
+    if: github.repository != 'draftm0de/flutter.clone'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch tags
+        run: git fetch --tags --force
+
+      - name: Read pubspec version
+        id: pubspec
+        run: |
+          set -euo pipefail
+          if ! grep -q '^version: ' pubspec.yaml; then
+            echo "::error::No 'version:' entry found in pubspec.yaml"
+            exit 1
+          fi
+
+          VERSION_LINE=$(grep '^version: ' pubspec.yaml | sed 's/version: //')
+          echo "::notice::pubspec.yaml declares $VERSION_LINE"
+          echo "current_version=${VERSION_LINE}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify version is not behind existing tags
+        env:
+          CURRENT_VERSION: ${{ steps.pubspec.outputs.current_version }}
+        run: |
+          set -euo pipefail
+
+          TAGS=$(git tag -l)
+
+          if [[ -z "$TAGS" ]]; then
+            echo "::notice::No tags found → skipping version comparison"
+            exit 0
+          fi
+
+          parse_version() {
+            local input="$1"
+            if [[ "$input" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(\+([0-9]+))?$ ]]; then
+              echo "${BASH_REMATCH[1]} ${BASH_REMATCH[2]} ${BASH_REMATCH[3]} ${BASH_REMATCH[5]:-0}"
+              return 0
+            fi
+            return 1
+          }
+
+          # parse current version
+          if ! CURRENT_PARTS=$(parse_version "$CURRENT_VERSION"); then
+            echo "::error::pubspec.yaml version '$CURRENT_VERSION' is not MAJOR.MINOR.PATCH[+BUILD]"
+            exit 1
+          fi
+
+          read -r CUR_MAJOR CUR_MINOR CUR_PATCH CUR_BUILD <<< "$CURRENT_PARTS"
+
+          latest_line=""
+          latest_major_line=""
+
+          while read -r TAG; do
+            [[ -z "$TAG" ]] && continue
+            CLEANED="$TAG"
+            if [[ "$TAG" == v* ]]; then
+              CLEANED="${TAG#v}"
+            fi
+
+            if ! PARTS=$(parse_version "$CLEANED"); then
+              echo "::warning::Skipping tag '$TAG' with unsupported format"
+              continue
+            fi
+
+            read -r MA MI PA BU <<< "$PARTS"
+
+            if [[ -z "$latest_line" ]]; then
+              latest_line="$MA $MI $PA $BU $TAG"
+            else
+              read -r LMA LMI LPA LBU LTAG <<< "$latest_line"
+              if (( MA > LMA || (MA == LMA && MI > LMI) || (MA == LMA && MI == LMI && PA > LPA) ||
+                    (MA == LMA && MI == LMI && PA == LPA && BU > LBU) )); then
+                latest_line="$MA $MI $PA $BU $TAG"
+              end
+            fi
+
+            if [[ MA -eq CUR_MAJOR ]]; then
+              if [[ -z "$latest_major_line" ]]; then
+                latest_major_line="$MA $MI $PA $BU $TAG"
+              else
+                read -r MMA MMI MPA MBU MTAG <<< "$latest_major_line"
+                if (( MI > MMI || (MI == MMI && PA > MPA) || (MI == MMI && PA == MPA && BU > MBU) )); then
+                  latest_major_line="$MA $MI $PA $BU $TAG"
+                fi
+              fi
+            fi
+          done <<< "$TAGS"
+
+          if [[ -z "$latest_line" ]]; then
+            echo "::notice::No semantic tags found → skipping comparison"
+            exit 0
+          fi
+
+          read -r LMA LMI LPA LBU LTAG <<< "$latest_line"
+          if (( CUR_MAJOR < LMA )) || (( CUR_MAJOR == LMA && CUR_MINOR < LMI )) || (( CUR_MAJOR == LMA && CUR_MINOR == LMI && CUR_PATCH < LPA )) || (( CUR_MAJOR == LMA && CUR_MINOR == LMI && CUR_PATCH == LPA && CUR_BUILD < LBU )); then
+            echo "::error::pubspec.yaml version $CURRENT_VERSION is behind latest tag $LTAG"
+            exit 1
+          fi
+
+          if [[ -n "$latest_major_line" ]]; then
+            read -r MMA MMI MPA MBU MTAG <<< "$latest_major_line"
+            if (( CUR_MINOR < MMI )) || (( CUR_MINOR == MMI && CUR_PATCH < MPA )) || (( CUR_MINOR == MMI && CUR_PATCH == MPA && CUR_BUILD < MBU )); then
+              echo "::error::pubspec.yaml version $CURRENT_VERSION is behind latest v$CUR_MAJOR.x tag $MTAG"
+              exit 1
+            fi
+          fi
+
+          echo "::notice::pubspec.yaml version $CURRENT_VERSION is up to date with tags"
+
   tests:
     if: github.repository != 'draftm0de/flutter.clone'
+    needs: verify-version-tag
     runs-on: ubuntu-latest
 
     steps:
@@ -74,83 +191,3 @@ jobs:
 
       - name: Run tests
         run: flutter test
-
-  build-tag-version:
-    if: github.repository != 'draftm0de/flutter.clone' && github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor != 'github-actions[bot]'
-    needs: tests
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup Git user
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Bump pubspec version
-        id: bump
-        run: |
-          set -euo pipefail
-
-          if ! grep -q '^version: ' pubspec.yaml; then
-            echo "::error::No 'version:' entry found in pubspec.yaml"
-            exit 1
-          fi
-
-          VERSION_LINE=$(grep '^version: ' pubspec.yaml | sed 's/version: //')
-          echo "::notice::Current version: $VERSION_LINE"
-
-          CORE_VERSION="$VERSION_LINE"
-          BUILD_PART=""
-          HAS_BUILD=false
-
-          if [[ "$VERSION_LINE" == *"+"* ]]; then
-            HAS_BUILD=true
-            CORE_VERSION="${VERSION_LINE%%+*}"
-            BUILD_PART="${VERSION_LINE#*+}"
-          fi
-
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$CORE_VERSION"
-
-          if [[ -z "$MAJOR" || -z "$MINOR" || -z "$PATCH" ]]; then
-            echo "::error::Could not parse version '$CORE_VERSION' as MAJOR.MINOR.PATCH"
-            exit 1
-          fi
-
-          PATCH=$((PATCH + 1))
-          NEW_CORE="${MAJOR}.${MINOR}.${PATCH}"
-
-          if $HAS_BUILD; then
-            NEW_VERSION="${NEW_CORE}+${BUILD_PART}"
-          else
-            NEW_VERSION="$NEW_CORE"
-          fi
-
-          sed -i "s/^version: .*/version: ${NEW_VERSION}/" pubspec.yaml
-          echo "✔ Updated pubspec.yaml to ${NEW_VERSION}"
-
-          echo "new_version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
-
-      - name: Commit version bump
-        env:
-          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
-        run: |
-          git add pubspec.yaml
-
-          if git diff --cached --quiet; then
-            echo "::notice::No changes to commit."
-            exit 0
-          fi
-
-          git commit -m "chore: auto-tagging version to ${NEW_VERSION} [skip ci]"
-          git push
-
-      - name: Summarize
-        env:
-          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
-        run: |
-          echo "- [x] Updated pubspec version to ${NEW_VERSION}" >> "$GITHUB_STEP_SUMMARY"
