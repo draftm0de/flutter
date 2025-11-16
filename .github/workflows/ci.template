@@ -6,6 +6,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: write
+
 jobs:
   ci:
     uses: draftm0de/flutter/.github/workflows/ci.yml@main
