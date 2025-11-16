@@ -12,13 +12,7 @@ on:
       - synchronize
       - reopened
       - ready_for_review
-  push:
-    branches:
-      - main
   workflow_call:
-
-permissions:
-  contents: write
 
 jobs:
   verify-version-tag:
