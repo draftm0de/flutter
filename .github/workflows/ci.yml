@@ -95,7 +95,7 @@ jobs:
               if (( MA > LMA || (MA == LMA && MI > LMI) || (MA == LMA && MI == LMI && PA > LPA) ||
                     (MA == LMA && MI == LMI && PA == LPA && BU > LBU) )); then
                 latest_line="$MA $MI $PA $BU $TAG"
-              end
+              fi
             fi
 
             if [[ MA -eq CUR_MAJOR ]]; then
