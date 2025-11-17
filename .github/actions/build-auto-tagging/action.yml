@@ -11,9 +11,18 @@ outputs:
   version:
     description: "Version read from pubspec.yaml (x.y.z)"
     value: ${{ steps.read_version.outputs.version }}
+  version_with_build:
+    description: "Full version read from pubspec.yaml (x.y.z+build)"
+    value: ${{ steps.read_version.outputs.version_with_build }}
+  build_metadata:
+    description: "Build metadata portion that followed the semver (if any)"
+    value: ${{ steps.read_version.outputs.build_metadata }}
   new_version:
     description: "Next patch version (x.y.(z+1))"
     value: ${{ steps.patch_version.outputs.new_version }}
+  new_version_with_build:
+    description: "Next patch version, preserving build metadata if it existed"
+    value: ${{ steps.patch_version.outputs.new_version_with_build }}
 
 runs:
   using: "composite"
@@ -36,24 +45,39 @@ runs:
           exit 1
         fi
 
-        # Strip 'version:' and build metadata (+...)
-        VERSION=$(echo "$VERSION_LINE" \
-          | sed 's/version:[[:space:]]*//; s/+.*//')
+        # Strip 'version:' prefix and trailing spaces but keep build metadata (+...)
+        RAW_VERSION=$(echo "$VERSION_LINE" \
+          | sed 's/version:[[:space:]]*//; s/[[:space:]]*$//')
 
-        if [ -z "$VERSION" ]; then
+        BASE_VERSION="$RAW_VERSION"
+        BUILD_METADATA=""
+        if echo "$RAW_VERSION" | grep -q '+'; then
+          BASE_VERSION="${RAW_VERSION%%+*}"
+          BUILD_METADATA="${RAW_VERSION#*+}"
+        fi
+
+        if [ -z "$BASE_VERSION" ]; then
           echo "::error::Version string is empty after parsing"
           exit 1
         fi
 
         # Basic semver sanity check
-        if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-          echo "::error::Version '$VERSION' is not in propper x.y.z format"
+        if ! echo "$BASE_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+          echo "::error::Version '$BASE_VERSION' is not in propper x.y.z format"
           exit 1
         fi
 
-        echo "::notice::pubspec version: $VERSION"
-        echo "- [x] Read version from $FILE: $VERSION" >> $GITHUB_STEP_SUMMARY
-        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+        if [ -n "$BUILD_METADATA" ]; then
+          echo "::notice::pubspec version: $BASE_VERSION+$BUILD_METADATA"
+          echo "- [x] Read version from $FILE: $BASE_VERSION+$BUILD_METADATA" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "::notice::pubspec version: $BASE_VERSION"
+          echo "- [x] Read version from $FILE: $BASE_VERSION" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        echo "version=$BASE_VERSION" >> "$GITHUB_OUTPUT"
+        echo "version_with_build=$RAW_VERSION" >> "$GITHUB_OUTPUT"
+        echo "build_metadata=$BUILD_METADATA" >> "$GITHUB_OUTPUT"
 
     - name: Ensure no later major / major.minor tag exists
       id: check_tags
@@ -139,11 +163,18 @@ runs:
       shell: bash
       run: |
         VERSION='${{ steps.read_version.outputs.version }}'
+        BUILD='${{ steps.read_version.outputs.build_metadata }}'
         IFS=. read MAJOR MINOR PATCH <<< "$VERSION"
 
         NEW_PATCH=$((PATCH + 1))
         NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
 
-        echo "::notice::new patch version: $NEW_VERSION"
-        echo "- [x] New Tag version: $NEW_VERSION" >> $GITHUB_STEP_SUMMARY        
+        FULL_VERSION="$NEW_VERSION"
+        if [ -n "$BUILD" ]; then
+          FULL_VERSION="$NEW_VERSION+$BUILD"
+        fi
+
+        echo "::notice::new patch version: $FULL_VERSION"
+        echo "- [x] New Tag version: $FULL_VERSION" >> $GITHUB_STEP_SUMMARY        
         echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+        echo "new_version_with_build=$FULL_VERSION" >> "$GITHUB_OUTPUT"

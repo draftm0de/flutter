@@ -33,9 +33,9 @@ jobs:
         uses: ./.github/actions/build-auto-tagging
 
       - name: Patch pubspec.yaml
-        if: steps.pubspec.outputs.new_version != ''
+        if: steps.pubspec.outputs.new_version_with_build != ''
         run: |
-          TARGET_VERSION=${{ steps.pubspec.outputs.new_version }}
+          TARGET_VERSION=${{ steps.pubspec.outputs.new_version_with_build }}
 
           sed -i "s/^version: .*/version: ${TARGET_VERSION}/" pubspec.yaml
 
@@ -43,9 +43,9 @@ jobs:
           echo "- [x] pubspec.yaml version set to: $TARGET_VERSION" >> $GITHUB_STEP_SUMMARY
 
       - name: Commit pubspec.yaml changes
-        if: steps.pubspec.outputs.new_version != ''
+        if: steps.pubspec.outputs.new_version_with_build != ''
         run: |
-          TARGET_VERSION=${{ steps.pubspec.outputs.new_version }}
+          TARGET_VERSION=${{ steps.pubspec.outputs.new_version_with_build }}
           git add -A
           git commit -m "chore: auto-tagging version to ${TARGET_VERSION} [skip ci]"
           git push
