@@ -1,60 +1,10 @@
-name: Release Tagging
+name: Flutter Release
 
-# Creates the next patch tag based on the pubspec version whenever main changes or on demand.
 on:
   push:
-    branches:
-      - main
-  workflow_call:
-
-permissions:
-  contents: write
+    branches: [main]
 
 jobs:
-  version-auto-tag:
-    # avoid running on disallowed repo and prevent loops on bot pushes
-    if: github.repository != 'draftm0de/flutter.clone' && github.actor != 'github-actions[bot]'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup Git user
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"   
-          echo "✔ Git use configured successfully!"
-
-      - name: Build auto-tagging
-        id: pubspec
-        uses: ./.github/actions/build-auto-tagging
-
-      - name: Patch pubspec.yaml
-        if: steps.pubspec.outputs.new_version_with_build != ''
-        run: |
-          TARGET_VERSION=${{ steps.pubspec.outputs.new_version_with_build }}
-
-          sed -i "s/^version: .*/version: ${TARGET_VERSION}/" pubspec.yaml
-
-          echo "✔ pubspec.yaml version set to: $TARGET_VERSION"
-          echo "- [x] pubspec.yaml version set to: $TARGET_VERSION" >> $GITHUB_STEP_SUMMARY
-
-      - name: Commit pubspec.yaml changes
-        if: steps.pubspec.outputs.new_version_with_build != ''
-        run: |
-          TARGET_VERSION=${{ steps.pubspec.outputs.new_version_with_build }}
-          git add -A
-          git commit -m "chore: auto-tagging version to ${TARGET_VERSION} [skip ci]"
-          git push
-
-      - name: Create and push tag
-        if: steps.pubspec.outputs.new_version != ''
-        run: |
-          TARGET_VERSION=${{ steps.pubspec.outputs.new_version }}
-          TAG="v${TARGET_VERSION}"
-
-          git tag "$TAG"
-          git push origin "$TAG"
+  draftmode-flutter-release:
+    uses: draftm0de/github.workflows/.github/workflows/flutter-release.yml@main
+    secrets: inherit

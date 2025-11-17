@@ -1,46 +1,10 @@
 name: Flutter CI
 
-# Runs formatter, analyzer, and tests for PRs, and on pushes to main also bumps the
-# package version so the release workflow can tag the freshly built revision.
-
 on:
   pull_request:
-    branches:
-      - main
-    types:
-      - opened
-      - synchronize
-      - reopened
-      - ready_for_review
   workflow_dispatch:
-  workflow_call:
 
 jobs:
-  verify-version-tag:
-    if: github.repository != 'draftm0de/flutter.clone'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Verify auto-tagging
-        id: pubspec
-        uses: ./.github/actions/build-auto-tagging
-
-  tests:
-    if: github.repository != 'draftm0de/flutter.clone'
-    needs: verify-version-tag
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Verify auto-tagging
-        id: pubspec
-        uses: ./.github/actions/flutter-test
+  draftmode-flutter-ci:
+    uses: draftm0de/github.workflows/.github/workflows/flutter-ci.yml@main
+    secrets: inherit
