@@ -12,6 +12,7 @@ on:
       - synchronize
       - reopened
       - ready_for_review
+  workflow_dispatch:
   workflow_call:
 
 jobs:
@@ -25,111 +26,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Fetch tags
-        run: git fetch --tags --force
-
-      - name: Read pubspec version
+      - name: Verify auto-tagging
         id: pubspec
-        run: |
-          set -euo pipefail
-          if ! grep -q '^version: ' pubspec.yaml; then
-            echo "::error::No 'version:' entry found in pubspec.yaml"
-            exit 1
-          fi
-
-          VERSION_LINE=$(grep '^version: ' pubspec.yaml | sed 's/version: //')
-          echo "::notice::pubspec.yaml declares $VERSION_LINE"
-          echo "current_version=${VERSION_LINE}" >> "$GITHUB_OUTPUT"
-
-      - name: Verify version is not behind existing tags
-        env:
-          CURRENT_VERSION: ${{ steps.pubspec.outputs.current_version }}
-        run: |
-          set -euo pipefail
-
-          TAGS=$(git tag -l)
-
-          if [[ -z "$TAGS" ]]; then
-            echo "::notice::No tags found → skipping version comparison"
-            exit 0
-          fi
-
-          parse_version() {
-            local input="$1"
-            if [[ "$input" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(\+([0-9]+))?$ ]]; then
-              echo "${BASH_REMATCH[1]} ${BASH_REMATCH[2]} ${BASH_REMATCH[3]} ${BASH_REMATCH[5]:-0}"
-              return 0
-            fi
-            return 1
-          }
-
-          # parse current version
-          if ! CURRENT_PARTS=$(parse_version "$CURRENT_VERSION"); then
-            echo "::error::pubspec.yaml version '$CURRENT_VERSION' is not MAJOR.MINOR.PATCH[+BUILD]"
-            exit 1
-          fi
-
-          read -r CUR_MAJOR CUR_MINOR CUR_PATCH CUR_BUILD <<< "$CURRENT_PARTS"
-
-          latest_line=""
-          latest_major_line=""
-
-          while read -r TAG; do
-            [[ -z "$TAG" ]] && continue
-            CLEANED="$TAG"
-            if [[ "$TAG" == v* ]]; then
-              CLEANED="${TAG#v}"
-            fi
-
-            if ! PARTS=$(parse_version "$CLEANED"); then
-              echo "::warning::Skipping tag '$TAG' with unsupported format"
-              continue
-            fi
-
-            read -r MA MI PA BU <<< "$PARTS"
-
-            if [[ -z "$latest_line" ]]; then
-              latest_line="$MA $MI $PA $BU $TAG"
-            else
-              read -r LMA LMI LPA LBU LTAG <<< "$latest_line"
-              if (( MA > LMA || (MA == LMA && MI > LMI) || (MA == LMA && MI == LMI && PA > LPA) ||
-                    (MA == LMA && MI == LMI && PA == LPA && BU > LBU) )); then
-                latest_line="$MA $MI $PA $BU $TAG"
-              fi
-            fi
-
-            if [[ MA -eq CUR_MAJOR ]]; then
-              if [[ -z "$latest_major_line" ]]; then
-                latest_major_line="$MA $MI $PA $BU $TAG"
-              else
-                read -r MMA MMI MPA MBU MTAG <<< "$latest_major_line"
-                if (( MI > MMI || (MI == MMI && PA > MPA) || (MI == MMI && PA == MPA && BU > MBU) )); then
-                  latest_major_line="$MA $MI $PA $BU $TAG"
-                fi
-              fi
-            fi
-          done <<< "$TAGS"
-
-          if [[ -z "$latest_line" ]]; then
-            echo "::notice::No semantic tags found → skipping comparison"
-            exit 0
-          fi
-
-          read -r LMA LMI LPA LBU LTAG <<< "$latest_line"
-          if (( CUR_MAJOR < LMA )) || (( CUR_MAJOR == LMA && CUR_MINOR < LMI )) || (( CUR_MAJOR == LMA && CUR_MINOR == LMI && CUR_PATCH < LPA )) || (( CUR_MAJOR == LMA && CUR_MINOR == LMI && CUR_PATCH == LPA && CUR_BUILD < LBU )); then
-            echo "::error::pubspec.yaml version $CURRENT_VERSION is behind latest tag $LTAG"
-            exit 1
-          fi
-
-          if [[ -n "$latest_major_line" ]]; then
-            read -r MMA MMI MPA MBU MTAG <<< "$latest_major_line"
-            if (( CUR_MINOR < MMI )) || (( CUR_MINOR == MMI && CUR_PATCH < MPA )) || (( CUR_MINOR == MMI && CUR_PATCH == MPA && CUR_BUILD < MBU )); then
-              echo "::error::pubspec.yaml version $CURRENT_VERSION is behind latest v$CUR_MAJOR.x tag $MTAG"
-              exit 1
-            fi
-          fi
-
-          echo "::notice::pubspec.yaml version $CURRENT_VERSION is up to date with tags"
+        uses: ./.github/actions/build-auto-tagging
 
   tests:
     if: github.repository != 'draftm0de/flutter.clone'
@@ -139,49 +38,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
         with:
-          channel: 'stable'
-          flutter-version-file: pubspec.yaml
-          cache: true
+          fetch-depth: 0
 
-      - name: Cache pub packages
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.pub-cache
-            **/.dart_tool
-          key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-pub-
-
-      - name: Flutter pub get
-        run: flutter pub get
-
-      - name: Generate localizations and verify they are commited
-        run: |
-          if [ -f "l10n.yaml" ]; then
-            flutter gen-l10n
-          
-            if ! git diff --quiet; then
-              echo "::error::Localization files are not committed or outdated!"
-              echo "Run 'flutter gen-l10n' locally and commit the generated files."
-              git diff
-              exit 1
-            else 
-              echo "✔ Localization files are up to date."
-            fi
-          else
-            echo "::notice::No l10n.yaml found → skipping localization verification"
-          fi        
-
-      - name: Enforce formatting
-        run: dart format --output=none --set-exit-if-changed .
-
-      - name: Analyze
-        run: dart analyze .
-
-      - name: Run tests
-        run: flutter test
+      - name: Verify auto-tagging
+        id: pubspec
+        uses: ./.github/actions/flutter-test
